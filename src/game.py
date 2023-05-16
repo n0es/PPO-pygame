@@ -150,7 +150,7 @@ pygame.display.set_caption('vroom!')
 clock = pygame.time.Clock()
 font = pygame.font.SysFont('Arial', 10)
 
-walls, checkpoints = load_track('track.txt')
+walls, checkpoints = load_track('tracks/new.track')
 
 
 def preprocess_experiences(states, actions, rewards, next_states, dones, gamma=0.99, lambd=0.95):
