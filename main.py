@@ -1,2 +1,2 @@
 from src import game
-from src import draw
+# from src import draw
