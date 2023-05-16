@@ -3,7 +3,7 @@ import sys
 from pygame.locals import QUIT, MOUSEBUTTONDOWN, KEYDOWN
 
 def save_track(tracks_dict):
-    with open('track.txt', 'w') as f:
+    with open('../tracks/track.track', 'w') as f:
         for track_type, segments in tracks_dict.items():
             f.write(f'{track_type}:\n')
             for segment in segments:
