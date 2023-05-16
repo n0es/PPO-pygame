@@ -1,87 +1,112 @@
 import pygame, sys, math, torch, random
 import numpy as np
 
-from neuralnetwork import PPO
-from raytracer import RayTracer
-from camera import Camera
+from src.neuralnetwork import PPO
+from src.raytracer import RayTracer
+from src.camera import Camera
 from collections import deque
 from pygame.locals import QUIT
 
-def load_track(file_name):
-  walls = []
-  checkpoints = []
-  current_mode = None
+class Track:
+  def __init__(self, file_name):
+    self.walls = []
+    self.checkpoints = []
+    self.current_mode = None
 
-  with open(file_name, 'r') as f:
-    for line in f:
-      line = line.strip()
-      if not line:
-        continue
+    with open(file_name, 'r') as f:
+      for line in f:
+        line = line.strip()
+        if not line:
+          continue
 
-      if line.endswith(':'):
-        current_mode = line[:-1]
-      else:
-        x1, y1, x2, y2 = [int(i) for i in line.split(', ')]
-        if current_mode == 'WALLS':
-          walls.append((x1, y1, x2, y2))
-        elif current_mode == 'CHECKPOINTS':
-          checkpoints.append((x1, y1, x2, y2))
+        if line.endswith(':'):
+          self.current_mode = line[:-1]
+        else:
+          x1, y1, x2, y2 = [int(i) for i in line.split(', ')]
+          if self.current_mode == 'WALLS':
+            self.walls.append((x1, y1, x2, y2))
+          elif self.current_mode == 'CHECKPOINTS':
+            self.checkpoints.append((x1, y1, x2, y2))
 
-  return walls, checkpoints
+class Line:
+  def __init__(self, x1, y1, x2, y2):
+    self.points = [x1, y1, x2, y2]
+    self.p1 = [x1, y1]
+    self.p2 = [x2, y2]
+  def __repr__(self):
+    return f'Line({self.points})'
+  
+  def length(self):
+    return ((self.p1[0]-self.p2[0])**2+(self.p1[1]-self.p2[1])**2)**0.5
+  
+  def intersects(self, line2):
+    x1, y1, x2, y2 = self.points
+    x3, y3, x4, y4 = line2.points
+    den = (x1-x2)*(y3-y4)-(y1-y2)*(x3-x4)
+    if den == 0:
+      return False
+    px = ((x1*y2-y1*x2)*(x3-x4)-(x1-x2)*(x3*y4-y3*x4))/den
+    py = ((x1*y2-y1*x2)*(y3-y4)-(y1-y2)*(x3*y4-y3*x4))/den
+    if (min(x1, x2) <= px <= max(x1, x2) and min(y1, y2) <= py <= max(y1, y2) and
+      min(x3, x4) <= px <= max(x3, x4) and min(y3, y4) <= py <= max(y3, y4)):
+      return True
+    return False
+
+class Car: 
+  def __init__(self, pos = [200,55], rot=-90, ID='0', color='#f00', weights=[], biases=[]):
+    self.pos = pos
+    self.rot = rot
+    self.ID = ID
+    self.color = color
+    self.weights = weights
+    self.biases = biases
+    self.vel = [0,0]
+    self.accel = .2
+    self.speed = 4
+    self.width = 6
+    self.height = 10
+    self.initial = Car(pos, rot, ID, color, weights, biases)
+
+  def reset(self):
+    self = self.initial.copy()
+  
+  def intersects(self, line):
+    vertices = self.vertices()
+    for i in range(len(vertices)):
+      car_line = (vertices[i][0],vertices[i][1],vertices[i-1][0],vertices[i-1][1])
+      if line.intersects(Line(*car_line)):
+        return True
+    return False
+  
+  def vertices(self):
+    sin = math.sin(math.radians(self.rot))
+    cos = math.cos(math.radians(self.rot))
+    return [
+      [self.pos[0] + sin*self.height/2 - cos*self.width/2,
+      self.pos[1] + cos*self.height/2 + sin*self.width/2],
+      [self.pos[0] - sin*self.height/2 - cos*self.width/2,
+      self.pos[1] - cos*self.height/2 + sin*self.width/2],
+      [self.pos[0] - sin*self.height/2 + cos*self.width/2,
+      self.pos[1] - cos*self.height/2 - sin*self.width/2],
+      [self.pos[0] + sin*self.height/2 + cos*self.width/2,
+      self.pos[1] + cos*self.height/2 - sin*self.width/2],
+    ]
+  
+  def collides(self, track):
+    for line in track:
+      if self.intersects(Line(*line)):
+        return True
+    return False
 
 def choose_action(action_probs):
     return np.random.choice(5, p=action_probs)
-
-def load_track(file_name):
-  walls = []
-  checkpoints = []
-  current_mode = None
-
-  with open(file_name, 'r') as f:
-    for line in f:
-      line = line.strip()
-      if not line:
-        continue
-
-      if line.endswith(':'):
-        current_mode = line[:-1]
-      else:
-        x1, y1, x2, y2 = [int(i) for i in line.split(', ')]
-        if current_mode == 'WALLS':
-          walls.append((x1, y1, x2, y2))
-        elif current_mode == 'CHECKPOINTS':
-          checkpoints.append((x1, y1, x2, y2))
-
-  return walls, checkpoints
-
-def draw_rect_alpha(surface, color, rect):
-  shape_surf = pygame.Surface(pygame.Rect(rect).size, pygame.SRCALPHA)
-  pygame.draw.rect(shape_surf, color, shape_surf.get_rect())
-  surface.blit(shape_surf, rect)
-
-def distance(p1,p2):
-  return ((p1[0]-p2[0])**2+(p1[1]-p2[1])**2)**0.5
 
 def cap_velocity(velocity, max_speed=1.5):
     magnitude = math.sqrt(velocity[0]**2 + velocity[1]**2)
     if magnitude > max_speed:
         normalized_velocity = [component / magnitude for component in velocity]
         return [component * max_speed for component in normalized_velocity]
-    else:
-        return velocity
-
-def line_intersection(line1, line2):
-  x1, y1, x2, y2 = line1
-  x3, y3, x4, y4 = line2
-  den = (x1-x2)*(y3-y4)-(y1-y2)*(x3-x4)
-  if den == 0:
-    return False
-  px = ((x1*y2-y1*x2)*(x3-x4)-(x1-x2)*(x3*y4-y3*x4))/den
-  py = ((x1*y2-y1*x2)*(y3-y4)-(y1-y2)*(x3*y4-y3*x4))/den
-  if (min(x1, x2) <= px <= max(x1, x2) and min(y1, y2) <= py <= max(y1, y2) and
-    min(x3, x4) <= px <= max(x3, x4) and min(y3, y4) <= py <= max(y3, y4)):
-    return True
-  return False
+    else: return velocity
   
 def detect_collision(car_vertices, track, camera):
   for i in range(len(car_vertices)):
