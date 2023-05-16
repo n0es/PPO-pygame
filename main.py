@@ -1,2 +1,2 @@
-import src/game
-# import src/draw
+from src import game
+from src import draw
