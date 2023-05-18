@@ -67,6 +67,9 @@ class Car:
     self.height = 10
     self.initial = Car(pos, rot, ID, color, weights, biases)
 
+    self.score = 0
+    self.age = 0
+
   def reset(self):
     self = self.initial.copy()
   
@@ -98,50 +101,30 @@ class Car:
         return True
     return False
 
-def choose_action(action_probs):
-    return np.random.choice(5, p=action_probs)
+  def choose_action(action_probs):
+      return np.random.choice(5, p=action_probs)
 
-def cap_velocity(velocity, max_speed=1.5):
-    magnitude = math.sqrt(velocity[0]**2 + velocity[1]**2)
-    if magnitude > max_speed:
-        normalized_velocity = [component / magnitude for component in velocity]
-        return [component * max_speed for component in normalized_velocity]
-    else: return velocity
-  
-def detect_collision(car_vertices, track, camera):
-  for i in range(len(car_vertices)):
-    car_line = (car_vertices[i][0], car_vertices[i][1], car_vertices[i - 1][0], car_vertices[i - 1][1])
-    for line in track:
-      if line_intersection(car_line, (line[0]-camera.pos[0],line[1]-camera.pos[1],line[2]-camera.pos[0],line[3]-camera.pos[1])):
+  def cap_velocity(velocity, max_speed=1.5):
+      magnitude = math.sqrt(velocity[0]**2 + velocity[1]**2)
+      if magnitude > max_speed:
+          normalized_velocity = [component / magnitude for component in velocity]
+          return [component * max_speed for component in normalized_velocity]
+      else: return velocity
+
+  def passed_checkpoint(v, checkpoint_line):
+    for i in range(4):
+      if line_intersection((v[i][0],v[i][1],v[(i+1)%4][0],v[(i+1)%4][1]), checkpoint_line):
         return True
-  return False
+    return False
 
-def passed_checkpoint(v, checkpoint_line):
-  for i in range(4):
-    if line_intersection((v[i][0],v[i][1],v[(i+1)%4][0],v[(i+1)%4][1]), checkpoint_line):
-      return True
-  return False
+  def calculate_reward(self):
+    checkpoint_reward = 10
+    time_penalty = 2.5
 
-def reset_car(pos, rot, vel, layer_sizes):
-  global score
-  score = 0
-  pos[0] = 200
-  pos[1] = 55
-  rot[0] = -90
-  rot[1] = 0
-  vel[0] = 0
-  vel[1] = 0
-  new_nn = PPO(11, 64, 5, device)
-  return pos, rot, vel, new_nn
-
-def calculate_reward(score, time_since_checkpoint):
-  checkpoint_reward = 100
-  time_penalty = -1
-
-  reward = checkpoint_reward * score \
-         + time_penalty * time_since_checkpoint
-  
-  return reward
+    reward = checkpoint_reward * self.score \
+          + time_penalty * self.age
+    
+    return reward
 
 pi = 3.141592653589793
 score = 0
@@ -175,7 +158,7 @@ pygame.display.set_caption('vroom!')
 clock = pygame.time.Clock()
 font = pygame.font.SysFont('Arial', 10)
 
-walls, checkpoints = load_track('tracks/new.track')
+track = Track('tracks/new.track')
 
 
 def preprocess_experiences(states, actions, rewards, next_states, dones, gamma=0.99, lambd=0.95):
@@ -212,8 +195,7 @@ def collect_experiences():
         # Update and display RayTracer
         ray_tracer.update()
         # track is a list of lines. lines look like [x1,y1,x2,y2]
-        track = walls
-        ray_tracer.display(screen,track,camera)
+        ray_tracer.display(screen,track.walls,camera)
 
         for i in keys:
           match i:
@@ -291,11 +273,11 @@ def collect_experiences():
         coords = font.render(f'[{pos[0]//1},{pos[1]//1}], {rot[0]}*', True, (255, 0, 0))
         screen.blit(coords, (5, 5))
         # draw track lines
-        for line in track:
+        for line in track.walls:
           pygame.draw.line(screen, 'red', (line[0] - camera.pos[0], line[1] - camera.pos[1]),
                             (line[2] - camera.pos[0], line[3] - camera.pos[1]), 2)
         # draw checkpoint lines
-        for i,line in enumerate(checkpoints):
+        for i,line in enumerate(track.checkpoints):
           pygame.draw.line(screen,'blue', (line[0] - camera.pos[0], line[1] - camera.pos[1]),
                             (line[2] - camera.pos[0], line[3] - camera.pos[1]), 2)
           # draw checkpoint number
@@ -303,13 +285,13 @@ def collect_experiences():
           screen.blit(num, ((line[0] + line[2]) / 2 - camera.pos[0], (line[1] + line[3]) / 2 - camera.pos[1]))
         
           # Added check for passing the checkpoint and increase the score
-        if len(checkpoints) > 0:
-          if detect_collision(vertices, [checkpoints[score % len(checkpoints)]], camera):
+        if len(track.checkpoints) > 0:
+          if detect_collision(vertices, [track.checkpoints[score % len(track.checkpoints)]], camera):
             score += 1
             time_since_checkpoint = 0
 
           # Check for collision and reset the car if there's a collision
-        if detect_collision(vertices, track, camera) or time_since_checkpoint >= 15:
+        if detect_collision(vertices, track.walls, camera) or time_since_checkpoint >= 15:
           time_elapsed = time_since_checkpoint = 0 
           pos, rot, vel, nn = reset_car(pos, rot, vel, [11, 9, 5])
           ray_tracer = RayTracer(pos, rot, 250, (-fov//2, fov//2), fov//tracers)
@@ -338,7 +320,7 @@ def collect_experiences():
           
         pygame.display.update()
         if collect_experiences_flag:
-          done = detect_collision(vertices, track, camera) or time_since_checkpoint >= 15
+          done = detect_collision(vertices, track.walls, camera) or time_since_checkpoint >= 15
           reward = calculate_reward(score, time_since_checkpoint)
           nn_input_next = nn_input[:]
 
