@@ -111,9 +111,9 @@ class Car:
           return [component * max_speed for component in normalized_velocity]
       else: return velocity
 
-  def passed_checkpoint(v, checkpoint_line):
+  def passed_checkpoint(self, checkpoint_line):
     for i in range(4):
-      if line_intersection((v[i][0],v[i][1],v[(i+1)%4][0],v[(i+1)%4][1]), checkpoint_line):
+      if self.intersects(checkpoint_line):
         return True
     return False
 
