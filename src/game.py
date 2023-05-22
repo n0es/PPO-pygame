@@ -26,6 +26,13 @@ class Track:
             self.walls.append((x1, y1, x2, y2))
           elif self.current_mode == 'CHECKPOINTS':
             self.checkpoints.append((x1, y1, x2, y2))
+  def render(self, screen):
+    for line in self.walls:
+      pygame.draw.line(screen, 'red', (line[0], line[1]), (line[2], line[3]), 2)
+    for i,line in enumerate(self.checkpoints):
+      pygame.draw.line(screen,'blue', (line[0], line[1]), (line[2], line[3]), 2)
+      num = font.render(str(i), True, (0, 0, 0))
+      screen.blit(num, ((line[0] + line[2]) / 2, (line[1] + line[3]) / 2))
 
 class Line:
   def __init__(self, x1, y1, x2, y2):
@@ -161,7 +168,7 @@ font = pygame.font.SysFont('Arial', 10)
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # nn = PPO(11, 64, 5, device)
 
-track = Track('tracks/new.track')
+track = Track(__file__[:-7]+'../tracks/track.txt')
 
 epoch = 0
 cars = np.empty(10, dtype = Car)
@@ -173,6 +180,7 @@ while running:
   tick = clock.tick(FPS)
   dt = tick / (1000/(FPS*multiplier))
 
+  track.render(screen)
   
 
 
@@ -231,16 +239,7 @@ pos[1]+=vel[1]*dt
 coords = font.render(f'[{pos[0]//1},{pos[1]//1}], {rot[0]}*', True, (255, 0, 0))
 screen.blit(coords, (5, 5))
 # draw track lines
-for line in track.walls:
-  pygame.draw.line(screen, 'red', (line[0], line[1]),
-                    (line[2], line[3]), 2)
-# draw checkpoint lines
-for i,line in enumerate(track.checkpoints):
-  pygame.draw.line(screen,'blue', (line[0], line[1]),
-                    (line[2], line[3]), 2)
-  # draw checkpoint number
-  num = font.render(str(i), True, (0, 0, 0))
-  screen.blit(num, ((line[0] + line[2]) / 2, (line[1] + line[3]) / 2))
+
 
   # Added check for passing the checkpoint and increase the score
 if len(track.checkpoints) > 0:
