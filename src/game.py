@@ -159,7 +159,6 @@ class Car:
     self.rayTracer.update()
     # track is a list of lines. lines look like [x1,y1,x2,y2]
     
-
     # Collect input data for the neural network
     nn_input = []
     for i in self.rayTracer.distances:
