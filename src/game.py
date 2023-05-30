@@ -1,10 +1,24 @@
-import pygame, sys, math, torch, random
+import pygame, sys, math, torch, random, os
 import numpy as np
 
 from neuralnetwork import PPO
 from raytracer import RayTracer
 from collections import deque
 from pygame.locals import QUIT
+
+def mutate_weights_biases(parent_model, mutation_rate=0.1, mutation_scale=0.5):
+    parent_weights = parent_model.get_weights()
+    parent_biases = parent_model.get_biases()
+
+    def mutate_array(arr):
+        mutation_mask = np.random.rand(*arr.shape) < mutation_rate
+        mutation_values = np.random.uniform(-mutation_scale, mutation_scale, arr.shape)
+        return arr + (mutation_mask * mutation_values)
+
+    mutated_weights = [mutate_array(w) for w in parent_weights]
+    mutated_biases = [mutate_array(b) for b in parent_biases]
+
+    return mutated_weights, mutated_biases
 
 class Track:
   def __init__(self, file_name):
@@ -64,21 +78,21 @@ class Car:
     self.rot = rot
     self.ID = ID
     self.color = color
-    self.weights = weights
-    self.biases = biases
     self.vel = [0,0]
     self.accel = .2
     self.speed = 4.0
     self.width = 6
     self.height = 10
     self.rayTracer = RayTracer(pos, rot, 250, (-fov//2, fov//2), fov//tracers)
+    self.initial = self
+    self.nn = PPO(11, 64, 5)
 
     self.score = 0
     self.age = 0.0
     self.time_since_checkpoint = 0.0
 
   def reset(self):
-    self = self.initial.copy()
+    self = self.initial
   
   def intersects(self, line):
     vertices = self.vertices()
@@ -134,21 +148,39 @@ class Car:
     return reward
   
   def render(self, screen):
-    sin = math.sin(math.radians(self.rot[0]))
-    cos = math.cos(math.radians(self.rot[0]))
+    pygame.draw.polygon(screen, 'red', car.vertices())
+    self.rayTracer.display(screen,track.walls)
 
-    vertices = [
-      [self.pos[0] + sin*self.height/2 - cos*self.width/2,
-      self.pos[1] + cos*self.height/2 + sin*self.width/2],
-      [self.pos[0] - sin*self.height/2 - cos*self.width/2,
-      self.pos[1] - cos*self.height/2 + sin*self.width/2],
-      [self.pos[0] - sin*self.height/2 + cos*self.width/2,
-      self.pos[1] - cos*self.height/2 - sin*self.width/2],
-      [self.pos[0] + sin*self.height/2 + cos*self.width/2,
-      self.pos[1] + cos*self.height/2 - sin*self.width/2],
-    ]
+  def update(self, tick):
+    dt = tick/1000
+    self.age += dt
+    self.time_since_checkpoint += dt
 
-    pygame.draw.polygon(screen, 'red', vertices)
+    self.rayTracer.update()
+    # track is a list of lines. lines look like [x1,y1,x2,y2]
+    
+
+    # Collect input data for the neural network
+    nn_input = []
+    for i in self.rayTracer.distances:
+      nn_input.append(i)
+    nn_input.append(self.vel[0])
+    nn_input.append(self.vel[1])
+    nn_input.append(self.rot)
+
+    predicted_output = self.nn.calculate_outputs(nn_input)
+    action = Car.choose_action(predicted_output)
+    action = 0
+    if action == 0:  # Move forward
+      self.vel[0] -= math.sin(math.radians(self.rot))*self.accel*dt
+      self.vel[1] -= math.cos(math.radians(self.rot))*self.accel*dt
+    elif action == 1:  # Turn left
+      self.rot += .8*dt
+    elif action == 2:  # Turn right
+      self.rot -= .8*dt
+    elif action == 3: # Brake
+      self.vel[0] = self.vel[0]*.9
+      self.vel[1] = self.vel[1]*.9
 
 pi = 3.141592653589793
 score = 0
@@ -167,24 +199,59 @@ font = pygame.font.SysFont('Arial', 10)
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # nn = PPO(11, 64, 5, device)
+track_file = os.path.join(os.path.dirname(__file__), '../tracks/new.track')
+track = Track(track_file)
 
-track = Track(__file__[:-7]+'../tracks/track.txt')
+population_size = 10
+cars = [Car() for _ in range(population_size)]
+models = [PPO(11, 64, 5) for _ in range(population_size)]  # Replace the parameters with the correct ones for your PPO models
 
-epoch = 0
-cars = np.empty(10, dtype = Car)
-running = True
-while running:
-  for event in pygame.event.get():
-    if event.type == pygame.QUIT: running = False
-  pygame.draw.rect(screen, (255,255,255), pygame.Rect(0, 0, width, height))
-  tick = clock.tick(FPS)
-  dt = tick / (1000/(FPS*multiplier))
+generations = 10
+num_best_parents = 2
 
-  track.render(screen)
-  
+for generation in range(generations):
+    print(f"Generation {generation + 1}")
 
+    for car in cars:
+        car.reset()
 
-  pygame.display.update()
+    running = True
+    while running:
+      tick = clock.tick(FPS)
+      screen.fill('white')
+      for event in pygame.event.get():
+        if event.type == QUIT:
+          pygame.quit()
+          sys.exit()
+        for car in cars:
+          car.update(tick)
+          car.render(screen)
+        # Check if all cars have stopped
+        if all(car.collides(track.walls) for car in cars):
+            running = False
+
+        pygame.display.update()
+
+    # Evaluate each car based on its score and age
+    cars = sorted(cars, key=lambda car: car.calculate_reward(), reverse=True)
+
+    # Select best parents
+    best_parents = cars[:num_best_parents]
+
+    # Create the new generation of cars with mutated weights/biases
+    new_generation = []
+    new_models = []
+    for i in range(population_size):
+        # Use the mutate_weights_biases function to generate mutated weights/biases from a parent model
+        new_weights, new_biases = mutate_weights_biases(models[best_parents[i % num_best_parents]])
+        new_car = Car()  # You can set new_car's attributes here if needed, using new_weights and new_biases
+        new_model = PPO(11, 64, 5)  # You can set new_model's attributes here if needed, using new_weights and new_biases
+        new_generation.append(new_car)
+        new_models.append(new_model)
+
+    # Update the cars and models with the new generation
+    cars = new_generation
+    models = new_models
 
 '''
 time_since_checkpoint += (tick/1000) * multiplier

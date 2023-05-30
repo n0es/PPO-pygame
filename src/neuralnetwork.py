@@ -4,9 +4,9 @@ import torch.optim as optim
 import numpy as np
 
 class PPO(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, device):
+    def __init__(self, input_size, hidden_size, output_size):
         super(PPO, self).__init__()
-        self.device = device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.pol_eval = self._build_eval_nn(input_size, hidden_size, output_size)
         self.old_pol_eval = self._build_eval_nn(input_size, hidden_size, output_size)
         self.value_function = self._build_value_function(input_size, hidden_size)

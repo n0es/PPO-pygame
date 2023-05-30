@@ -23,7 +23,6 @@ def line_intersection(line1, line2):
 
 
 class RayTracer:
-
   def __init__(self, pos, rot, length, angle_range=(-45, 60), angle_step=15):
     self.pos = pos
     self.rot = rot
@@ -37,12 +36,12 @@ class RayTracer:
     self.rays = []
     for angle_offset in range(self.angle_range[0], self.angle_range[1],
                               self.angle_step):
-      angle = -self.rot[0] + angle_offset
+      angle = -self.rot + angle_offset
       ray = (self.pos[0] + self.length * math.sin(math.radians(angle)),
              self.pos[1] - self.length * math.cos(math.radians(angle)))
       self.rays.append(ray)
 
-  def display(self, screen, walls, camera):
+  def display(self, screen, walls):
     self.distances = []
     for ray in self.rays:
       min_intersection = None
@@ -58,15 +57,15 @@ class RayTracer:
       if min_intersection:
         pygame.draw.line(
           screen, 'green',
-          (self.pos[0] - camera.pos[0], self.pos[1] - camera.pos[1]),
-          (min_intersection[0] - camera.pos[0],
-           min_intersection[1] - camera.pos[1]))
+          (self.pos[0], self.pos[1]),
+          (min_intersection[0],
+           min_intersection[1]))
         self.distances.append(min_dist)
       else:
         pygame.draw.line(
           screen, 'green',
-          (self.pos[0] - camera.pos[0], self.pos[1] - camera.pos[1]),
-          (ray[0] - camera.pos[0], ray[1] - camera.pos[1]))
+          (self.pos[0], self.pos[1]),
+          (ray[0], ray[1]))
         self.distances.append(self.length)
 
   def check_collisions(self, lines):
