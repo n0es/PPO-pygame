@@ -31,15 +31,15 @@ class RayTracer:
     self.angle_step = angle_step
     self.rays = []
     self.distances = []
-
-  def update(self):
-    self.rays = []
     for angle_offset in range(self.angle_range[0], self.angle_range[1],
                               self.angle_step):
       angle = -self.rot + angle_offset
       ray = (self.pos[0] + self.length * math.sin(math.radians(angle)),
              self.pos[1] - self.length * math.cos(math.radians(angle)))
       self.rays.append(ray)
+      self.distances.append(self.length)
+        
+
 
   def display(self, screen, walls):
     self.distances = []
@@ -48,7 +48,7 @@ class RayTracer:
       min_dist = float('inf')
 
       for line in walls:
-        intersection = self.ipoint((self.pos[0], self.pos[1], *ray), line)
+        intersection = self.ipoint((self.pos[0], self.pos[1], *ray), line.points)
         if intersection:
           dist = distance(self.pos, intersection)
           if dist < min_dist:

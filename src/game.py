@@ -37,16 +37,16 @@ class Track:
         else:
           x1, y1, x2, y2 = [int(i) for i in line.split(', ')]
           if self.current_mode == 'WALLS':
-            self.walls.append((x1, y1, x2, y2))
+            self.walls.append(Line(x1, y1, x2, y2))
           elif self.current_mode == 'CHECKPOINTS':
-            self.checkpoints.append((x1, y1, x2, y2))
+            self.checkpoints.append(Line(x1, y1, x2, y2))
   def render(self, screen):
     for line in self.walls:
-      pygame.draw.line(screen, 'red', (line[0], line[1]), (line[2], line[3]), 2)
+      pygame.draw.line(screen, 'red', (line.points[0], line.points[1]), (line.points[2], line.points[3]), 2)
     for i,line in enumerate(self.checkpoints):
-      pygame.draw.line(screen,'blue', (line[0], line[1]), (line[2], line[3]), 2)
+      pygame.draw.line(screen,'blue', (line.points[0], line.points[1]), (line.points[2], line.points[3]), 2)
       num = font.render(str(i), True, (0, 0, 0))
-      screen.blit(num, ((line[0] + line[2]) / 2, (line[1] + line[3]) / 2))
+      screen.blit(num, ((line.points[0] + line.points[2]) / 2, (line.points[1] + line.points[3]) / 2))
 
 class Line:
   def __init__(self, x1, y1, x2, y2):
@@ -54,7 +54,10 @@ class Line:
     self.p1 = [x1, y1]
     self.p2 = [x2, y2]
   def __repr__(self):
+    return self.points
+  def __str__(self):
     return f'Line({self.points})'
+  
   
   def length(self):
     return ((self.p1[0]-self.p2[0])**2+(self.p1[1]-self.p2[1])**2)**0.5
@@ -79,12 +82,28 @@ class Car:
     self.ID = ID
     self.color = color
     self.vel = [0,0]
-    self.accel = .2
-    self.speed = 4.0
+    self.accel = 1
+    self.speed = 6
     self.width = 6
     self.height = 10
     self.rayTracer = RayTracer(pos, rot, 250, (-fov//2, fov//2), fov//tracers)
-    self.initial = self
+    self.initial = {
+      'pos': pos,
+      'rot': rot,
+      'vel': [0,0],
+      'accel': 1,
+      'speed': 6,
+      'width': 6,
+      'height': 10,
+      'rayTracer': {
+        'pos': pos,
+        'rot': rot,
+        'length': 250,
+        'angle_range': (-fov//2, fov//2),
+        'angle_step': fov//tracers
+      }
+
+    }
     self.nn = PPO(11, 64, 5)
 
     self.score = 0
@@ -92,7 +111,14 @@ class Car:
     self.time_since_checkpoint = 0.0
 
   def reset(self):
-    self = self.initial
+    for i in self.initial:
+      if i == 'rayTracer':
+        self.rayTracer = RayTracer(**self.initial[i])
+      else:
+        setattr(self, i, self.initial[i])
+    self.score = 0
+    self.age = 0.0
+    self.time_since_checkpoint = 0.0
   
   def intersects(self, line):
     vertices = self.vertices()
@@ -118,24 +144,27 @@ class Car:
   
   def collides(self, track):
     for line in track:
-      if self.intersects(Line(*line)):
+      if self.intersects(line):
         return True
     return False
 
-  def choose_action(action_probs):
-      return np.random.choice(5, p=action_probs)
+  def choose_action(self, action_probs):
+    arr = [np.random.choice(2, p=[1-prob, prob]) for prob in action_probs]
+    return int(''.join([str(i) for i in arr]), 2)
+  
 
-  def cap_velocity(velocity, max_speed=1.5):
+  def cap_velocity(self, velocity, max_speed=1.5):
       magnitude = math.sqrt(velocity[0]**2 + velocity[1]**2)
       if magnitude > max_speed:
           normalized_velocity = [component / magnitude for component in velocity]
           return [component * max_speed for component in normalized_velocity]
       else: return velocity
 
-  def passed_checkpoint(self, checkpoint_line):
-    for i in range(4):
-      if self.intersects(checkpoint_line):
-        return True
+  def passed_checkpoint(self, checkpoint_lines):
+    for l in checkpoint_lines:
+      for i in range(4):
+        if self.intersects(l):
+          return True
     return False
 
   def calculate_reward(self):
@@ -148,15 +177,17 @@ class Car:
     return reward
   
   def render(self, screen):
-    pygame.draw.polygon(screen, 'red', car.vertices())
     self.rayTracer.display(screen,track.walls)
+    pygame.draw.polygon(screen, 'red', car.vertices())
+    
 
   def update(self, tick):
     dt = tick/1000
     self.age += dt
     self.time_since_checkpoint += dt
 
-    self.rayTracer.update()
+    self.rayTracer.pos = self.pos
+    self.rayTracer.rot = self.rot
     # track is a list of lines. lines look like [x1,y1,x2,y2]
     
     # Collect input data for the neural network
@@ -168,22 +199,30 @@ class Car:
     nn_input.append(self.rot)
 
     predicted_output = self.nn.calculate_outputs(nn_input)
-    action = Car.choose_action(predicted_output)
-    action = 0
-    if action == 0:  # Move forward
+    action = self.choose_action(predicted_output)
+    
+    if action&0b1000>0: # Accelerate
       self.vel[0] -= math.sin(math.radians(self.rot))*self.accel*dt
       self.vel[1] -= math.cos(math.radians(self.rot))*self.accel*dt
-    elif action == 1:  # Turn left
-      self.rot += .8*dt
-    elif action == 2:  # Turn right
-      self.rot -= .8*dt
-    elif action == 3: # Brake
+    if action&0b0100>0:  # Turn left
+      self.rot += 150*dt
+    if action&0b0010>0:  # Turn right
+      self.rot -= 150*dt
+    if action&0b0001>0: # Brake
       self.vel[0] = self.vel[0]*.9
       self.vel[1] = self.vel[1]*.9
 
+    self.vel = self.cap_velocity(self.vel, self.speed)
+    self.pos[0] += self.vel[0]
+    self.pos[1] += self.vel[1]
+    
+    if self.passed_checkpoint(track.checkpoints):
+      self.score += 1
+      self.time_since_checkpoint = 0.0
+
 pi = 3.141592653589793
 score = 0
-FPS = 30
+FPS = 60
 multiplier = 10
 tracers = 8
 fov = 360
@@ -201,35 +240,45 @@ font = pygame.font.SysFont('Arial', 10)
 track_file = os.path.join(os.path.dirname(__file__), '../tracks/new.track')
 track = Track(track_file)
 
-population_size = 10
+population_size = 2
 cars = [Car() for _ in range(population_size)]
-models = [PPO(11, 64, 5) for _ in range(population_size)]  # Replace the parameters with the correct ones for your PPO models
 
 generations = 10
-num_best_parents = 2
+num_best_parents = 1
 
 for generation in range(generations):
     print(f"Generation {generation + 1}")
 
     for car in cars:
-        car.reset()
+      car.reset()
 
     running = True
     while running:
       tick = clock.tick(FPS)
       screen.fill('white')
+      track.render(screen)
       for event in pygame.event.get():
         if event.type == QUIT:
           pygame.quit()
           sys.exit()
-        for car in cars:
-          car.update(tick)
-          car.render(screen)
-        # Check if all cars have stopped
-        if all(car.collides(track.walls) for car in cars):
-            running = False
+      for i,car in enumerate(cars):
+        car.update(tick)
+        car.render(screen)
 
-        pygame.display.update()
+        if car.collides(track.walls) or car.time_since_checkpoint > 15:
+          cars.pop(i)
+        if len(cars) <= num_best_parents:
+          running = False
+          break
+
+      # frame rate monitor
+      fps = font.render(str(int(clock.get_fps())), True, pygame.Color('Red'))
+      screen.blit(fps, (0, 0))
+      # cars monitor
+      cars_text = font.render(str(len(cars)), True, pygame.Color('Red'))
+      screen.blit(cars_text, (0, 10))
+
+      pygame.display.update()
 
     # Evaluate each car based on its score and age
     cars = sorted(cars, key=lambda car: car.calculate_reward(), reverse=True)
@@ -239,102 +288,12 @@ for generation in range(generations):
 
     # Create the new generation of cars with mutated weights/biases
     new_generation = []
-    new_models = []
     for i in range(population_size):
-        # Use the mutate_weights_biases function to generate mutated weights/biases from a parent model
-        new_weights, new_biases = mutate_weights_biases(models[best_parents[i % num_best_parents]])
-        new_car = Car()  # You can set new_car's attributes here if needed, using new_weights and new_biases
-        new_model = PPO(11, 64, 5)  # You can set new_model's attributes here if needed, using new_weights and new_biases
-        new_generation.append(new_car)
-        new_models.append(new_model)
+      parent_index = int(best_parents[i % num_best_parents].ID)
+      new_weights, new_biases = mutate_weights_biases(cars[parent_index].nn)
+      new_car = Car(pos=spawn, rot=-90)
+      new_car.nn = PPO(11, 64, 5) 
+      new_generation.append(new_car)
 
     # Update the cars and models with the new generation
     cars = new_generation
-    models = new_models
-
-'''
-time_since_checkpoint += (tick/1000) * multiplier
-time_elapsed += (tick/1000) * multiplier
-for event in pygame.event.get():
-  if event.type == QUIT:
-    pygame.quit()
-    sys.exit()
-  if event.type == pygame.KEYDOWN:
-    keys.append(event.key)
-  if event.type == pygame.KEYUP:
-    keys.remove(event.key)
-
-# Update and display RayTracer
-ray_tracer.update()
-# track is a list of lines. lines look like [x1,y1,x2,y2]
-ray_tracer.display(screen,track.walls)
-
-# Collect input data for the neural network
-nn_input = []
-for i in ray_tracer.distances:
-  nn_input.append(i)
-nn_input.append(vel[0])
-nn_input.append(vel[1])
-nn_input.append(rot[0])
-
-# Predict the output using the neural network
-predicted_output = nn.calculate_outputs(nn_input)
-
-# Map the predicted output to actions
-action = choose_action(predicted_output)
-
-# Perform the corresponding action
-if action == 0:  # Move forward
-  vel[0] -= math.sin(math.radians(rot[0]))*accel*dt
-  vel[1] -= math.cos(math.radians(rot[0]))*accel*dt
-elif action == 1:  # Turn left
-  rot[0] += .8*dt
-elif action == 2:  # Turn right
-  rot[0] -= .8*dt
-elif action == 3: # Brake
-  vel[0] = vel[0]*.9
-  vel[1] = vel[1]*.9
-
-vel = cap_velocity(vel,3)
-pos[0]+=vel[0]*dt
-pos[1]+=vel[1]*dt
-#vel = [*map(lambda i:.99*i if abs(i)>.1 else 0, vel),]
-# this shit caused issues. idk. friction no worky
-
-
-coords = font.render(f'[{pos[0]//1},{pos[1]//1}], {rot[0]}*', True, (255, 0, 0))
-screen.blit(coords, (5, 5))
-# draw track lines
-
-
-  # Added check for passing the checkpoint and increase the score
-if len(track.checkpoints) > 0:
-  if detect_collision(vertices, [track.checkpoints[score % len(track.checkpoints)]]):
-    score += 1
-    time_since_checkpoint = 0
-
-  # Check for collision and reset the car if there's a collision
-if detect_collision(vertices, track.walls) or time_since_checkpoint >= 15:
-  time_elapsed = time_since_checkpoint = 0 
-  pos, rot, vel, nn = reset_car(pos, rot, vel, [11, 9, 5])
-  ray_tracer = RayTracer(pos, rot, 250, (-fov//2, fov//2), fov//tracers)
-
-  reward = 0
-
-# Score display
-score_text = font.render(f'Score: {score}', True, (0, 0, 0))
-screen.blit(score_text, (width - 70, 5))
-time_text = font.render(str(time_since_checkpoint), True, (0, 0, 0))
-screen.blit(time_text, (width - 70, 15))
-
-s = font.render(str((vel[0]**2+vel[1]**2)**.5), True, 'blue')
-screen.blit(s, (5,15))
-for i,d in enumerate(ray_tracer.distances):
-  t = font.render(str(round(d,2)), True, 'blue')
-  screen.blit(t, (5,25+i*10))
-
-# Draw velocity vector
-velocity_scale = 20  # Adjust this value to change the length of the velocity vector
-velocity_vector = (pos[0] + vel[0] * velocity_scale, pos[1] + vel[1] * velocity_scale)
-pygame.draw.line(screen, (0, 0, 255), (pos[0],pos[1]), velocity_vector, 2)
-  '''

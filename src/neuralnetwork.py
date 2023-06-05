@@ -4,15 +4,25 @@ import torch.optim as optim
 import numpy as np
 
 class PPO(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size, hidden_size, output_size, learning_rate=0.001):
         super(PPO, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.pol_eval = self._build_eval_nn(input_size, hidden_size, output_size)
         self.old_pol_eval = self._build_eval_nn(input_size, hidden_size, output_size)
         self.value_function = self._build_value_function(input_size, hidden_size)
 
-        self.optimizer = optim.Adam(self.parameters(), lr=0.001)
+        self.optimizer = optim.Adam(self.parameters(), lr=learning_rate)
         self.MseLoss = nn.MSELoss()
+
+    def get_weights(self):
+        return [self.pol_eval[0].weight.detach().cpu().numpy(), 
+                self.pol_eval[2].weight.detach().cpu().numpy(), 
+                self.value_function[0].weight.detach().cpu().numpy()]
+
+    def get_biases(self):
+        return [self.pol_eval[0].bias.detach().cpu().numpy(),
+                self.pol_eval[2].bias.detach().cpu().numpy(),
+                self.value_function[0].bias.detach().cpu().numpy()]
 
     def _clear_grad(self):
         self.pol_eval.zero_grad()
@@ -34,9 +44,9 @@ class PPO(nn.Module):
         ).to(self.device)
 
     def calculate_outputs(self, inputs):
-        inputs = torch.tensor(inputs, dtype=torch.float32).to(self.device)
+        inputs = torch.tensor(inputs, dtype=torch.float32).unsqueeze(0).to(self.device)  # Add an extra dimension for the batch size
         output = self.pol_eval(inputs)
-        return output.cpu().detach().numpy()
+        return output.cpu().detach().numpy()[0]  # Return the 0-th element to remove the extra dimension
 
     def update(self, states, actions, log_probs_old, returns, advantages, clip_epsilon):
         states = torch.tensor(states, dtype=torch.float32).to(self.device)
@@ -63,3 +73,10 @@ class PPO(nn.Module):
         self.optimizer.step()
 
         self.old_pol_eval.load_state_dict(self.pol_eval.state_dict())
+
+    def mutate(self, mutation_rate):
+        for layer in self.pol_eval:
+            if isinstance(layer, nn.Linear):
+                layer.weight.data += torch.randn(layer.weight.data.size()) * mutation_rate
+                layer.bias.data += torch.randn(layer.bias.data.size()) * mutation_rate
+        return self
