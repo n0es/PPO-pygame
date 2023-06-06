@@ -3,7 +3,6 @@ import numpy as np
 
 from neuralnetwork import PPO
 from raytracer import RayTracer
-from collections import deque
 from pygame.locals import QUIT
 
 def mutate_weights_biases(parent_model, mutation_rate=0.1, mutation_scale=0.5):
@@ -111,14 +110,12 @@ class Car:
     self.time_since_checkpoint = 0.0
 
   def reset(self):
-    for i in self.initial:
-      if i == 'rayTracer':
-        self.rayTracer = RayTracer(**self.initial[i])
-      else:
-        setattr(self, i, self.initial[i])
     self.score = 0
     self.age = 0.0
     self.time_since_checkpoint = 0.0
+    self.pos = self.initial['pos'][:]
+    self.rot = self.initial['rot']
+    self.vel = self.initial['vel'][:]
   
   def intersects(self, line):
     vertices = self.vertices()
@@ -201,14 +198,17 @@ class Car:
     predicted_output = self.nn.calculate_outputs(nn_input)
     action = self.choose_action(predicted_output)
     
-    if action&0b1000>0: # Accelerate
+    if action&0b10000>0: # Accelerate Forwards
       self.vel[0] -= math.sin(math.radians(self.rot))*self.accel*dt
       self.vel[1] -= math.cos(math.radians(self.rot))*self.accel*dt
-    if action&0b0100>0:  # Turn left
+    if action&0b01000>0: # Accelerate Backwards
+      self.vel[0] -= math.sin(math.radians(self.rot))*self.accel*dt
+      self.vel[1] -= math.cos(math.radians(self.rot))*self.accel*dt
+    if action&0b00100>0:  # Turn left
       self.rot += 150*dt
-    if action&0b0010>0:  # Turn right
+    if action&0b00010>0:  # Turn right
       self.rot -= 150*dt
-    if action&0b0001>0: # Brake
+    if action&0b00001>0: # Brake
       self.vel[0] = self.vel[0]*.9
       self.vel[1] = self.vel[1]*.9
 
@@ -248,9 +248,6 @@ num_best_parents = 1
 
 for generation in range(generations):
     print(f"Generation {generation + 1}")
-
-    for car in cars:
-      car.reset()
 
     running = True
     while running:
@@ -297,3 +294,5 @@ for generation in range(generations):
 
     # Update the cars and models with the new generation
     cars = new_generation
+    for car in cars:
+      car.reset()

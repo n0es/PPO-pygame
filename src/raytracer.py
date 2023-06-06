@@ -42,7 +42,14 @@ class RayTracer:
 
 
   def display(self, screen, walls):
+    self.rays = []
     self.distances = []
+    
+    for angle_offset in range(self.angle_range[0], self.angle_range[1], self.angle_step):
+      angle = -self.rot + angle_offset
+      ray = (self.pos[0] + self.length * math.sin(math.radians(angle)),
+              self.pos[1] - self.length * math.cos(math.radians(angle)))
+      self.rays.append(ray)
     for ray in self.rays:
       min_intersection = None
       min_dist = float('inf')
