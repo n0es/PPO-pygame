@@ -240,14 +240,17 @@ font = pygame.font.SysFont('Arial', 10)
 track_file = os.path.join(os.path.dirname(__file__), '../tracks/new.track')
 track = Track(track_file)
 
-population_size = 2
+population_size = 10
 cars = [Car() for _ in range(population_size)]
 
-generations = 10
-num_best_parents = 1
+generations = 1000
+max_generations_to_render = 10
+num_best_parents = 2
 
 for generation in range(generations):
     print(f"Generation {generation + 1}")
+
+    render_current_generation = (generation % max_generations_to_render) == 0
 
     running = True
     while running:
@@ -260,7 +263,8 @@ for generation in range(generations):
           sys.exit()
       for i,car in enumerate(cars):
         car.update(tick)
-        car.render(screen)
+        if render_current_generation:
+          car.render(screen)
 
         if car.collides(track.walls) or car.time_since_checkpoint > 15:
           cars.pop(i)
@@ -268,12 +272,13 @@ for generation in range(generations):
           running = False
           break
 
-      # frame rate monitor
-      fps = font.render(str(int(clock.get_fps())), True, pygame.Color('Red'))
-      screen.blit(fps, (0, 0))
-      # cars monitor
-      cars_text = font.render(str(len(cars)), True, pygame.Color('Red'))
-      screen.blit(cars_text, (0, 10))
+      if render_current_generation:
+        # frame rate monitor
+        fps = font.render(str(int(clock.get_fps())), True, pygame.Color('Red'))
+        screen.blit(fps, (0, 0))
+        # cars monitor
+        cars_text = font.render(str(len(cars)), True, pygame.Color('Red'))
+        screen.blit(cars_text, (0, 10))
 
       pygame.display.update()
 
