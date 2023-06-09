@@ -1,9 +1,18 @@
 import pygame, sys, math, torch, random, os
 import numpy as np
+import pickle
 
 from neuralnetwork import PPO
 from raytracer import RayTracer
 from pygame.locals import QUIT
+
+def save_model(model, generation, save_path='./saves', file_name_prefix='best_car'):
+  os.makedirs(save_path, exist_ok=True)
+  file_path = os.path.join(save_path, f'{file_name_prefix}_generation_{generation}.pkl')
+  with open(file_path, 'wb') as file:
+      pickle.dump(model, file)
+
+  print(f"Model saved at {file_path}")
 
 def mutate_weights_biases(parent_model, mutation_rate=0.1, mutation_scale=0.5):
     parent_weights = parent_model.get_weights()
@@ -57,32 +66,37 @@ class Line:
   def __str__(self):
     return f'Line({self.points})'
   
-  
   def length(self):
-    return ((self.p1[0]-self.p2[0])**2+(self.p1[1]-self.p2[1])**2)**0.5
-  
+    p1 = np.array(self.p1)
+    p2 = np.array(self.p2)
+    return np.linalg.norm(p1 - p2)
+
   def intersects(self, line2):
     x1, y1, x2, y2 = self.points
     x3, y3, x4, y4 = line2.points
-    den = (x1-x2)*(y3-y4)-(y1-y2)*(x3-x4)
-    if den == 0:
+    numerator1 = (x1 * y2 - y1 * x2)
+    numerator2 = (x3 * y4 - y3 * x4)
+    denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    if denom == 0:
       return False
-    px = ((x1*y2-y1*x2)*(x3-x4)-(x1-x2)*(x3*y4-y3*x4))/den
-    py = ((x1*y2-y1*x2)*(y3-y4)-(y1-y2)*(x3*y4-y3*x4))/den
-    if (min(x1, x2) <= px <= max(x1, x2) and min(y1, y2) <= py <= max(y1, y2) and
-      min(x3, x4) <= px <= max(x3, x4) and min(y3, y4) <= py <= max(y3, y4)):
+    px = (numerator1 * (x3 - x4) - (x1 - x2) * numerator2) / denom
+    py = (numerator1 * (y3 - y4) - (y1 - y2) * numerator2) / denom
+    if (np.min([x1, x2]) <= px <= np.max([x1, x2]) and np.min([y1, y2]) <= py <= np.max([y1, y2]) and
+      np.min([x3, x4]) <= px <= np.max([x3, x4]) and np.min([y3, y4]) <= py <= np.max([y3, y4])):
       return True
     return False
 
 class Car: 
-  def __init__(self, pos = [200,55], rot=-90, ID='0', color='#f00', weights=[], biases=[]):
+  def __init__(self, pos = [200,55], rot=-90, ID='0', color='#ff0000', weights=[], biases=[]):
+    self.dead = False
     self.pos = pos
     self.rot = rot
     self.ID = ID
     self.color = color
     self.vel = [0,0]
-    self.accel = 1
+    self.accel = 2
     self.speed = 6
+    self.friction = 0.02
     self.width = 6
     self.height = 10
     self.rayTracer = RayTracer(pos, rot, 250, (-fov//2, fov//2), fov//tracers)
@@ -90,7 +104,7 @@ class Car:
       'pos': pos,
       'rot': rot,
       'vel': [0,0],
-      'accel': 1,
+      'accel': 2,
       'speed': 6,
       'width': 6,
       'height': 10,
@@ -103,13 +117,14 @@ class Car:
       }
 
     }
-    self.nn = PPO(11, 64, 5)
+    self.nn = PPO(11, 32, 5)
 
     self.score = 0
     self.age = 0.0
     self.time_since_checkpoint = 0.0
 
   def reset(self):
+    self.dead = False
     self.score = 0
     self.age = 0.0
     self.time_since_checkpoint = 0.0
@@ -158,59 +173,62 @@ class Car:
       else: return velocity
 
   def passed_checkpoint(self, checkpoint_lines):
-    for l in checkpoint_lines:
-      for i in range(4):
-        if self.intersects(l):
-          return True
+    for i in range(4):
+      if self.intersects(checkpoint_lines[self.score]):
+        return True
     return False
 
   def calculate_reward(self):
-    checkpoint_reward = 10
+    checkpoint_reward = 20
     time_penalty = 2.5
+    death_pentalty = 30
 
-    reward = checkpoint_reward * self.score \
-          + time_penalty * self.age
+    reward = (checkpoint_reward * self.score) / (self.age + time_penalty) - (death_pentalty if self.dead else 0)
     
     return reward
   
   def render(self, screen):
     self.rayTracer.display(screen,track.walls)
-    pygame.draw.polygon(screen, 'red', car.vertices())
+    pygame.draw.polygon(screen, self.color, car.vertices())
     
 
   def update(self, tick):
     dt = tick/1000
     self.age += dt
     self.time_since_checkpoint += dt
+    self.color = '#ff0000' if self.time_since_checkpoint > 5 else '#00ff00'
 
     self.rayTracer.pos = self.pos
     self.rayTracer.rot = self.rot
-    # track is a list of lines. lines look like [x1,y1,x2,y2]
-    
-    # Collect input data for the neural network
-    nn_input = []
-    for i in self.rayTracer.distances:
-      nn_input.append(i)
-    nn_input.append(self.vel[0])
-    nn_input.append(self.vel[1])
-    nn_input.append(self.rot)
 
+    nn_input = self.rayTracer.distances + self.vel + [self.rot]
+    nn_input = torch.tensor(nn_input, dtype=torch.float32, device=(torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))).clone().detach()
     predicted_output = self.nn.calculate_outputs(nn_input)
     action = self.choose_action(predicted_output)
+
+    sin_rot = math.sin(math.radians(self.rot))
+    cos_rot = math.cos(math.radians(self.rot))
     
-    if action&0b10000>0: # Accelerate Forwards
-      self.vel[0] -= math.sin(math.radians(self.rot))*self.accel*dt
-      self.vel[1] -= math.cos(math.radians(self.rot))*self.accel*dt
-    if action&0b01000>0: # Accelerate Backwards
-      self.vel[0] -= math.sin(math.radians(self.rot))*self.accel*dt
-      self.vel[1] -= math.cos(math.radians(self.rot))*self.accel*dt
-    if action&0b00100>0:  # Turn left
-      self.rot += 150*dt
-    if action&0b00010>0:  # Turn right
-      self.rot -= 150*dt
-    if action&0b00001>0: # Brake
-      self.vel[0] = self.vel[0]*.9
-      self.vel[1] = self.vel[1]*.9
+    acceleration = [0, 0]
+
+    if action & 0b10000 > 0:
+      acceleration[0] -= sin_rot * self.accel * dt
+      acceleration[1] -= cos_rot * self.accel * dt
+    if action & 0b01000 > 0:
+      acceleration[0] += sin_rot * self.accel * dt
+      acceleration[1] += cos_rot * self.accel * dt
+    if action & 0b00100 > 0:
+      self.rot += 150 * dt
+    if action & 0b00010 > 0:
+      self.rot -= 150 * dt
+    if action & 0b00001 > 0:
+      self.vel[0] = self.vel[0] * .9
+      self.vel[1] = self.vel[1] * .9
+
+    # Apply friction
+    friction_force = [-self.friction * self.vel[0], -self.friction * self.vel[1]]
+    self.vel[0] += acceleration[0] + friction_force[0]
+    self.vel[1] += acceleration[1] + friction_force[1]
 
     self.vel = self.cap_velocity(self.vel, self.speed)
     self.pos[0] += self.vel[0]
@@ -222,7 +240,7 @@ class Car:
 
 pi = 3.141592653589793
 score = 0
-FPS = 60
+FPS = 90
 multiplier = 10
 tracers = 8
 fov = 360
@@ -235,17 +253,20 @@ pygame.display.set_caption('vroom!')
 clock = pygame.time.Clock()
 font = pygame.font.SysFont('Arial', 10)
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# nn = PPO(11, 64, 5, device)
 track_file = os.path.join(os.path.dirname(__file__), '../tracks/new.track')
 track = Track(track_file)
 
 population_size = 10
 cars = [Car() for _ in range(population_size)]
+for car in cars:
+  new_weights, new_biases = mutate_weights_biases(car.nn)
+  car.nn.set_weights(new_weights)
+  car.nn.set_biases(new_biases) 
 car_scores = []
 
 generations = 1000
 num_best_parents = 2
+elitism = 2
 
 for generation in range(generations):
     print(f"Generation {generation + 1}")
@@ -264,6 +285,7 @@ for generation in range(generations):
         car.render(screen)
 
         if car.collides(track.walls) or car.time_since_checkpoint > 15:
+          car.dead = True
           car_scores.append((car, car.calculate_reward()))
           cars.pop(i)
         if len(cars) <= num_best_parents:
@@ -277,25 +299,43 @@ for generation in range(generations):
       cars_text = font.render(str(len(cars)), True, pygame.Color('Red'))
       screen.blit(cars_text, (0, 10))
 
-      pygame.display.update()
+      pygame.display.flip()
 
-      # Add cars that are still running
-      car_scores.extend([(car, car.calculate_reward()) for car in cars])
+    # Add cars that are still running
+    car_scores.extend([(car, car.calculate_reward()) for car in cars])
 
-      # Sort cars based on their scores
-      car_scores.sort(key=lambda x: x[1], reverse=True)
+    # Sort cars based on their scores
+    car_scores.sort(key=lambda x: x[1], reverse=True)
 
-      # Update best_parents
-      best_parents = [car_score[0] for car_score in car_scores[:num_best_parents]]
+    # Update best_parents
+    best_parents = [car_score[0] for car_score in car_scores[:num_best_parents]]
 
+    # Normalize rewards
+    rewards = [score for _, score in car_scores]
+    mean_reward = np.mean(rewards)
+    std_reward = np.std(rewards)
+    normalized_rewards = [(score - mean_reward) / std_reward for score in rewards]
+    
     # Create the new generation of cars with mutated weights/biases
     new_generation = []
-    for i in range(population_size):
+
+    for i in range(elitism):
+      new_car = Car(pos=spawn, rot=-90)
+      new_car.nn = best_parents[i].nn
+      new_generation.append(new_car)
+    
+    for i in range(population_size - elitism):
       parent_index = int(best_parents[i % num_best_parents].ID)
       new_weights, new_biases = mutate_weights_biases(cars[parent_index].nn)
       new_car = Car(pos=spawn, rot=-90)
-      new_car.nn = PPO(11, 64, 5) 
+      new_car.nn.set_weights(new_weights)
+      new_car.nn.set_biases(new_biases)
+
       new_generation.append(new_car)
+
+    if (generation + 1) % 25 == 0:
+      best_car = best_parents[0]
+      save_model(best_car.nn, generation + 1)
 
     # Update the cars and models with the new generation
     cars = new_generation

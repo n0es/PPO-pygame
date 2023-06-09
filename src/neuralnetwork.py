@@ -23,6 +23,17 @@ class PPO(nn.Module):
         return [self.pol_eval[0].bias.detach().cpu().numpy(),
                 self.pol_eval[2].bias.detach().cpu().numpy(),
                 self.value_function[0].bias.detach().cpu().numpy()]
+    
+    def set_weights(self, new_weights):
+        self.pol_eval[0].weight = nn.Parameter(torch.tensor(new_weights[0], dtype=torch.float32, device=self.device).clone().detach())
+        self.pol_eval[2].weight = nn.Parameter(torch.tensor(new_weights[1], dtype=torch.float32, device=self.device).clone().detach())
+        self.value_function[0].weight = nn.Parameter(torch.tensor(new_weights[2], dtype=torch.float32, device=self.device).clone().detach())
+
+    def set_biases(self, new_biases):
+        self.pol_eval[0].bias = nn.Parameter(torch.tensor(new_biases[0], dtype=torch.float32, device=self.device).clone().detach())
+        self.pol_eval[2].bias = nn.Parameter(torch.tensor(new_biases[1], dtype=torch.float32, device=self.device).clone().detach())
+        self.value_function[0].bias = nn.Parameter(torch.tensor(new_biases[2], dtype=torch.float32, device=self.device).clone().detach())
+
 
     def _clear_grad(self):
         self.pol_eval.zero_grad()
@@ -32,14 +43,18 @@ class PPO(nn.Module):
         return nn.Sequential(
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),  # Additional hidden layer
+            nn.ReLU(),  # Additional ReLU activation
             nn.Linear(hidden_size, output_size),
-            nn.Softmax(dim=-1)  # softmax to obtain the probabilities for all actions
+            nn.Softmax(dim=-1)  # Softmax to obtain the probabilities for all actions
         ).to(self.device)
 
     def _build_value_function(self, input_size, hidden_size):
         return nn.Sequential(
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),  # Additional hidden layer
+            nn.ReLU(),  # Additional ReLU activation
             nn.Linear(hidden_size, 1)
         ).to(self.device)
 
