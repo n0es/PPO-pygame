@@ -242,15 +242,13 @@ track = Track(track_file)
 
 population_size = 10
 cars = [Car() for _ in range(population_size)]
+car_scores = []
 
 generations = 1000
-max_generations_to_render = 10
 num_best_parents = 2
 
 for generation in range(generations):
     print(f"Generation {generation + 1}")
-
-    render_current_generation = (generation % max_generations_to_render) == 0
 
     running = True
     while running:
@@ -263,30 +261,32 @@ for generation in range(generations):
           sys.exit()
       for i,car in enumerate(cars):
         car.update(tick)
-        if render_current_generation:
-          car.render(screen)
+        car.render(screen)
 
         if car.collides(track.walls) or car.time_since_checkpoint > 15:
+          car_scores.append((car, car.calculate_reward()))
           cars.pop(i)
         if len(cars) <= num_best_parents:
           running = False
           break
 
-      if render_current_generation:
-        # frame rate monitor
-        fps = font.render(str(int(clock.get_fps())), True, pygame.Color('Red'))
-        screen.blit(fps, (0, 0))
-        # cars monitor
-        cars_text = font.render(str(len(cars)), True, pygame.Color('Red'))
-        screen.blit(cars_text, (0, 10))
+      # frame rate monitor
+      fps = font.render(str(int(clock.get_fps())), True, pygame.Color('Red'))
+      screen.blit(fps, (0, 0))
+      # cars monitor
+      cars_text = font.render(str(len(cars)), True, pygame.Color('Red'))
+      screen.blit(cars_text, (0, 10))
 
       pygame.display.update()
 
-    # Evaluate each car based on its score and age
-    cars = sorted(cars, key=lambda car: car.calculate_reward(), reverse=True)
+      # Add cars that are still running
+      car_scores.extend([(car, car.calculate_reward()) for car in cars])
 
-    # Select best parents
-    best_parents = cars[:num_best_parents]
+      # Sort cars based on their scores
+      car_scores.sort(key=lambda x: x[1], reverse=True)
+
+      # Update best_parents
+      best_parents = [car_score[0] for car_score in car_scores[:num_best_parents]]
 
     # Create the new generation of cars with mutated weights/biases
     new_generation = []
