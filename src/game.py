@@ -87,8 +87,8 @@ class Line:
     return False
 
 class Car: 
-  def __init__(self, pos = [200,55], rot=-90, ID='0', color='#ff0000', weights=[], biases=[]):
-    self.dead = False
+  def __init__(self, pos = [300,140], rot=-90, ID='0', color='#ff0000', weights=[], biases=[]):
+    self.dead = False    # [200,75]
     self.pos = pos
     self.rot = rot
     self.ID = ID
@@ -182,8 +182,13 @@ class Car:
     checkpoint_reward = 20
     time_penalty = 2.5
     death_pentalty = 30
+    speed_penalty_weight = 5
 
-    reward = (checkpoint_reward * self.score) / (self.age + time_penalty) - (death_pentalty if self.dead else 0)
+    speed = math.sqrt(self.vel[0]**2 + self.vel[1]**2)
+    min_speed_threshold = 1
+    speed_penalty = 0 if speed >= min_speed_threshold else abs(min_speed_threshold - speed) * speed_penalty_weight
+
+    reward = (checkpoint_reward * self.score) / (self.age + time_penalty) - (death_pentalty if self.dead else 0) - speed_penalty
     
     return reward
   
@@ -244,7 +249,7 @@ FPS = 90
 multiplier = 10
 tracers = 8
 fov = 360
-spawn = [200,55]
+spawn = [300,140]
 width,height = 800,600
 
 pygame.init()
